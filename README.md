@@ -1,2 +1,2 @@
-# Video-Games-Sales-and-GDP
-A group project where members and I sought to find whether there was a correlation between video games sales and GDP
+# analyzing_video_game_sales
+A holistic approach to analyzing economic influence on video game sales

@@ -1,0 +1,503 @@
+---
+title: "320-Final"
+author: "Jinghan Chen"
+date:  "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(dplyr)
+library(reshape2)
+library(ggthemes)
+```
+
+```{r}
+library(readr)
+vgsales <- read_csv("Video Games Sales.csv")
+# world gdp data extracted from worldbank 
+gdp <- read_csv('worldgdp.csv', skip = 4, na = c("", "NA"))
+pop <- read_csv('worldpop.csv', skip = 4, na = c("", "NA"))
+gpe <- read_csv("gpe.csv")
+head(vgsales)
+```
+
+
+```{r}
+# 6875 non-empty values in dataset, omit any rows with empty values
+vgsales[vgsales == 'N/A'] = NA
+vgsales1 <- na.omit(vgsales)
+vgsales1 <- vgsales1[vgsales1$Year_of_Release != 2020,]
+vgsales1 <- vgsales1[,-15]
+vgsales1 <- vgsales1[,-12]
+names(vgsales1)[names(vgsales1) == "Year_of_Release"] <- "Year"
+head(vgsales1)
+```
+
+```{r}
+# clean world gdp data
+countrylist = c('Japan', 'United States', 'European Union')
+gdp <- gdp %>%
+  select('Country Name', '1980':'2018')
+gdp = gdp[gdp$`Country Name` %in% countrylist,]
+gdp = melt(gdp, id.vars = 'Country Name', var = 'Year')
+gdp$`Country Name`[gdp$`Country Name` == 'Japan'] = 'JP'
+gdp$`Country Name`[gdp$`Country Name` == 'United States'] = 'NA'
+gdp$`Country Name`[gdp$`Country Name` == 'European Union'] = 'EU'
+names(gdp)[names(gdp) == "Country Name"] <- "Region"
+```
+
+```{r}
+# clean world population data
+pop <- pop %>%
+  select('Country Name', '1980':'2018')
+pop = pop[pop$`Country Name` %in% countrylist,]
+pop = melt(pop, id.vars = 'Country Name', var = 'Year')
+pop$`Country Name`[pop$`Country Name` == 'Japan'] = 'JP'
+pop$`Country Name`[pop$`Country Name` == 'United States'] = 'NA'
+pop$`Country Name`[pop$`Country Name` == 'European Union'] = 'EU'
+names(pop)[names(pop) == "Country Name"] <- "Region"
+```
+
+
+```{r}
+# recession in the U.S. have an effect on sales from December 2007 to June 2009
+# compare nominal sales across region
+sales <- vgsales1 %>%
+  select(Year, NA_Sales, EU_Sales, JP_Sales, Other_Sales) 
+sales1 <- melt(sales, id.vars = 'Year', var = 'region')
+
+sum_sales_byregion <- sales1 %>%
+  group_by(region, Year) %>%
+  summarize(sum_sales = sum(value))
+
+sum_sales_byregion$region<-sub("_.*", "", sum_sales_byregion$region)
+ggplot(sum_sales_byregion, aes(x = Year, y = sum_sales, fill = region, group = region)) +    geom_area() + 
+  theme(axis.text.x =element_text(angle = 90, hjust = 1)) + 
+  annotate('rect', xmin = 17, xmax = 18, ymin = -Inf, ymax = Inf, alpha = 0.2) + 
+  labs(title = 'Regional Sales by Year', y = 'Annual Nominal Sales') +
+  annotate("text", x = 17, y = 400, label = "Financial Crisis", size = 3)
+```
+
+```{r}
+# world economy vs. sales
+# scatter plot
+gdp1 <- gdp %>%
+  rename(gdp = value) 
+gdp1<- dcast(gdp1, Year ~ Region)
+gdp_diff <- (gdp1[2:nrow(gdp1),2:ncol(gdp1)] -gdp1[1:(nrow(gdp1)-1),2:ncol(gdp1)])
+gdp_diff['Year'] = gdp1$Year[2:nrow(gdp1)]
+gdp_diff = melt(gdp_diff, id.vars = 'Year', var = 'Region')
+
+sales2 <- sales %>%
+  arrange(Year) %>%
+  group_by(Year) %>%
+  summarize(NA_sum = sum(NA_Sales), EU_sum = sum(EU_Sales), JP_sum = sum(JP_Sales), Other_sum = sum(Other_Sales))
+
+sales_diff <- (sales2[2:nrow(sales2),2:ncol(sales2)] -sales2[1:(nrow(sales2)-1),2:ncol(sales2)])
+sales_diff['Year'] <- sales2$Year[2:nrow(sales2)]
+
+sales_diff1 <- melt(sales_diff, id.vars = 'Year', var = 'Region')
+sales_diff1$Region<-sub("_.*", "", sales_diff1$Region)
+
+region_gdp_sales_change <- gdp_diff%>%
+  inner_join(sales_diff1, by = c('Region', 'Year'))
+
+
+
+region_gdp_sales_change %>%
+  ggplot(aes(x = value.x, y = value.y)) + geom_point() + geom_smooth() + 
+  facet_grid(. ~ Region) +
+  labs(title = 'North America GDP Change vs. Sales Change', x = 'GDP per Capita (Current $)', y = 'Nominal Sales')
+
+
+```
+
+
+```{r}
+gpe1 = filter(gpe, gpe$`Series Name` == "Population, total") 
+gpe2 = filter(gpe1, gpe1$`Country Name` %in% c("North America", "Japan", "European Union", "World")) 
+gpe3 <- gpe2[c(1:4, 25: 61)]  
+
+temp = gpe3[4,][c(5:41)] - gpe3[3,][c(5:41)] - gpe3[2,][c(5:41)] - gpe3[1,][c(5:41)] 
+temp <- cbind("Series Code" = "SP.POP.TOTL", temp) 
+temp <- cbind("Series Name" = "Population, total", temp) 
+temp <- cbind("Country Code" = "OTR", temp) 
+temp <- cbind("Country Name" = "Other", temp) 
+final_gpe = rbind(gpe3, temp) 
+gpe4 =gpe3%>% 
+  rename(region = "Country Code" ) 
+gpe5=gpe4 %>%   
+  mutate(region = ifelse(region =="EUU", "EU", region), region = ifelse(region =="NAC", "NA", region),  region = ifelse(region =="JPN", "JP", region), region = ifelse(region =="WLD", "Other", region)) 
+colnames(gpe5) <- sub('\\[[^.]+$', '', colnames(gpe5))
+colnames(gpe5) <- gsub(" ","",colnames(gpe5))
+gpe6=gpe5[-c(1,3:4)]
+
+gpe_tidy=gpe6 %>% gather(2:38, key='Year_of_Release', value="Population")
+
+sales <- vgsales %>%
+  select(Year_of_Release, NA_Sales, EU_Sales, JP_Sales, Other_Sales) 
+sales1 <- melt(sales, id.vars = 'Year_of_Release', var = 'region')
+
+sum_sales_byregion <- sales1 %>%
+  group_by(region, Year_of_Release) %>%
+  summarize(sum_sales = sum(value))
+
+sum_sales_byregion1=sum_sales_byregion[-c(38,39,40,78,79,80,118,119,120,158,159,160),]
+
+sum_sales_byregion1$region<-sub("_.*", "", sum_sales_byregion1$region)
+
+sales_gpe=inner_join(sum_sales_byregion1,gpe_tidy)
+
+sales_gpe_final<-sales_gpe%>%
+  mutate(SALESPOP=(sum_sales*1000000)/Population)
+colnames(sales_gpe_final)[names(sales_gpe_final) == "region"] <- "Region"
+colnames(sales_gpe_final)[names(sales_gpe_final) == "Year_of_Release"] <- "Year"
+
+gdp$Year=as.character(gdp$Year)
+
+gdp4mergefinal=inner_join(gdp, sales_gpe_final, by = c("Region","Year"))
+
+head(gdp4mergefinal)
+gdp4mergefinal$Region=factor(gdp4mergefinal$Region)
+gdp4mergefinal$Year=factor(gdp4mergefinal$Year)
+
+ggplot(gdp4mergefinal, aes(x = Year)) +    
+  geom_area(aes(y = SALESPOP, fill = Region, group = Region, stat="identity")) +
+  geom_line(aes(y=value/60000, group = Region)) +
+  scale_y_continuous(sec.axis = sec_axis(~.*60000, name="gdp"),limits=c(0,1.2))+
+  facet_grid(. ~ Region) +
+  theme(axis.text.x =element_text(angle = 90, hjust = 1)) + annotate('rect', xmin = 28.5, xmax = 30.5, ymin = -Inf, ymax = Inf, alpha = 0.2) + 
+  annotate("text", x = 29.5, 1, label = "Financial Crisis", size = 3)
+
+```
+
+
+```{r}
+# merge sales data with gdp and sales 
+temp <- vgsales1[,c(1,6:8)]
+temp <- melt(temp, id.vars = 'Name', var = 'Region')
+temp$Region <- gsub("_.*","",temp$Region)
+merged_vgsales <- vgsales1 %>%
+  select(1:5,11:14) %>%
+  left_join(temp, by = 'Name') %>%
+  rename(sales = value) %>%
+  left_join(gdp, by = c('Region','Year')) %>%
+  rename(gdp = value) %>%
+  left_join(pop, by = c('Region','Year')) %>%
+  rename(pop = value)
+merged_vgsales2 <- merged_vgsales %>%
+  mutate(sales_per_capita = sales/pop) 
+
+merged_vgsales2 <- merged_vgsales2[,-1]
+merged_vgsales2 <- merged_vgsales2[,-13]
+merged_vgsales2$Platform = factor(merged_vgsales2$Platform)
+merged_vgsales2$Genre = factor(merged_vgsales2$Genre)
+merged_vgsales2$Publisher = factor(merged_vgsales2$Publisher)
+merged_vgsales2$Region = factor(merged_vgsales2$Region)
+merged_vgsales2$Rating = factor(merged_vgsales2$Rating)
+merged_vgsales2$Year = as.numeric(merged_vgsales2$Year)
+merged_vgsales2$User_Score = as.numeric(merged_vgsales2$User_Score)
+merged_vgsales2
+```
+
+```{r}
+# Cross validation for the full model 
+library(tidyverse)
+library(ggplot2)
+library(modelr)
+library(purrr)
+library(broom)
+library(glmnet)
+complete = merged_vgsales2[complete.cases(merged_vgsales2), ]
+DATA=complete[sample(nrow(complete), 750), ]
+DATA2=DATA[,c("Platform","Year","Genre","Publisher","Critic_Score","User_Score","User_Count","Region","sales","gdp","pop", "Rating")]
+head(DATA2)
+y=DATA2$sales
+X=model_matrix(DATA2, sales~.*.)[,-1]
+var.names=names(X)
+dim(X)
+dim(y)
+
+set.seed(216)
+cvmod.0=cv.glmnet(y=y,x=as.matrix(X),alpha=0)
+set.seed(216)
+cvmod.25=cv.glmnet(y=y,x=as.matrix(X),alpha=0.25)
+set.seed(216)
+cvmod.5=cv.glmnet(y=y,x=as.matrix(X),alpha=0.5)
+set.seed(216)
+cvmod.75=cv.glmnet(y=y,x=as.matrix(X),alpha=0.75)
+set.seed(216)
+cvmod.1=cv.glmnet(y=y,x=as.matrix(X),alpha=1)
+CV.0.ERROR=cvmod.0$cvm[which(cvmod.0$lambda==cvmod.0$lambda.1se)]
+CV.25.ERROR=cvmod.25$cvm[which(cvmod.25$lambda==cvmod.25$lambda.1se)]
+CV.5.ERROR=cvmod.5$cvm[which(cvmod.5$lambda==cvmod.5$lambda.1se)]
+CV.75.ERROR=cvmod.75$cvm[which(cvmod.75$lambda==cvmod.75$lambda.1se)]
+CV.1.ERROR=cvmod.1$cvm[which(cvmod.1$lambda==cvmod.1$lambda.1se)]
+MOD.RESULT=tibble(alpha=c(0,0.25,0.5,0.75,1),
+                  lambda=c(cvmod.0$lambda.1se,cvmod.25$lambda.1se,
+                           cvmod.5$lambda.1se,cvmod.75$lambda.1se,
+                           cvmod.1$lambda.1se),
+                  CV.Error=c(CV.0.ERROR,CV.25.ERROR,CV.5.ERROR,
+                             CV.75.ERROR,CV.1.ERROR))
+print(MOD.RESULT)
+
+best.alpha=MOD.RESULT$alpha[which.min(MOD.RESULT$CV.Error)]
+best.lambda=MOD.RESULT$lambda[which.min(MOD.RESULT$CV.Error)]
+best.mod=glmnet(y=y,x=as.matrix(X),nlambda=1,lambda=best.lambda,alpha=best.alpha)
+best.coef=as.tibble(as.matrix(coef(best.mod)))
+best.coef2=best.coef %>% 
+              mutate(Parameter=c("Int",var.names)) %>%
+              rename(Estimate=s0) %>%
+              select(Parameter,Estimate)
+nonzero.best.coef=best.coef2 %>%
+                    filter(Estimate!=0)
+print(nonzero.best.coef,n=1e3)
+DATA2$GS.hat=predict(best.mod,newx=as.matrix(X))
+
+ggplot(DATA2) +
+  geom_point(aes(x=sales,y=GS.hat),color="lightskyblue2") +
+  geom_abline(a=0,b=1,linetype="dashed") +
+  theme_minimal() +
+  ylab("Predicted Global Sales") +
+  xlab("Actual Global Sales")
+ggplot(DATA2) +
+  geom_histogram(aes(x=sales-GS.hat),fill="lightskyblue2") +
+  theme_minimal() +
+  xlab("Residuals") +
+  ylab("Frequency")
+```
+
+
+```{r}
+# Gradient Boosting Modeling
+library(ISLR)
+library(randomForest)
+library(gbm)
+library(dplyr)
+smp_siz = floor(0.75*nrow(merged_vgsales2))  # creates a value for dividing the data into train and test. In this case the value is defined as 75% of the number of rows in the dataset
+smp_siz
+set.seed(123)   # set seed to ensure you always have same random numbers generated
+train_ind = sample(seq_len(nrow(merged_vgsales2)),size = smp_siz)  
+# Randomly identifies therows equal to sample size ( defined in previous instruction) from  all the rows of Smarket dataset and stores the row number in train_ind
+train =merged_vgsales2[train_ind,] 
+#creates the training dataset with row numbers stored in train_ind
+test=merged_vgsales2[-train_ind,]
+n=dim(train)[1]
+n_fold<-5
+folds_i <- sample(rep(1:n_fold, length.out = n))
+OUT.boo=NULL
+TRUTHboo=NULL
+OUTPUTboo=NULL
+set.seed(3)
+for (k in 1:n_fold) 
+{
+  test.ID <- which(folds_i == k)
+  train_set <- train[-test.ID, ]
+  test_set <- train[test.ID, ]
+  
+  boo=gbm(sales~.,data=train_set,distribution = "gaussian", n.trees=100, shrinkage=0.001,interaction.depth = 2)
+  predicted_boo=predict(boo,test_set,n.trees = 100, type = 'response')
+  mse=mean((predicted_boo-train$sales)^2) 
+  OUT.boo=c(OUT.boo, mse)
+}
+```
+
+```{r}
+mean(OUT.boo)
+sd(OUT.boo) #standard error:
+```
+
+```{r}
+boo=gbm(sales~.,data=train,distribution = "gaussian", n.trees=100, shrinkage=0.001,interaction.depth = 2)
+predicted_boo=predict(boo,test,n.trees = 100, type = 'response')
+mse=mean((predicted_boo-train$sales)^2)
+mse
+```
+
+```{r}
+summary(boo,order = TRUE)
+```
+
+```{r}
+# Cross validation for variables selected after Gradient Boosting 
+complete = merged_vgsales2[complete.cases(merged_vgsales2), ]
+DATA=complete[sample(nrow(complete), 750), ]
+DATA3=DATA[,c("Platform","Genre","Publisher","User_Count","Region","sales","pop")]
+head(DATA3)
+y=DATA3$sales
+X=model_matrix(DATA3, sales~.)[,-1]
+var.names=names(X)
+dim(X)
+dim(y)
+
+set.seed(216)
+cvmod.0=cv.glmnet(y=y,x=as.matrix(X),alpha=0)
+set.seed(216)
+cvmod.25=cv.glmnet(y=y,x=as.matrix(X),alpha=0.25)
+set.seed(216)
+cvmod.5=cv.glmnet(y=y,x=as.matrix(X),alpha=0.5)
+set.seed(216)
+cvmod.75=cv.glmnet(y=y,x=as.matrix(X),alpha=0.75)
+set.seed(216)
+cvmod.1=cv.glmnet(y=y,x=as.matrix(X),alpha=1)
+CV.0.ERROR=cvmod.0$cvm[which(cvmod.0$lambda==cvmod.0$lambda.1se)]
+CV.25.ERROR=cvmod.25$cvm[which(cvmod.25$lambda==cvmod.25$lambda.1se)]
+CV.5.ERROR=cvmod.5$cvm[which(cvmod.5$lambda==cvmod.5$lambda.1se)]
+CV.75.ERROR=cvmod.75$cvm[which(cvmod.75$lambda==cvmod.75$lambda.1se)]
+CV.1.ERROR=cvmod.1$cvm[which(cvmod.1$lambda==cvmod.1$lambda.1se)]
+MOD.RESULT=tibble(alpha=c(0,0.25,0.5,0.75,1),
+                  lambda=c(cvmod.0$lambda.1se,cvmod.25$lambda.1se,
+                           cvmod.5$lambda.1se,cvmod.75$lambda.1se,
+                           cvmod.1$lambda.1se),
+                  CV.Error=c(CV.0.ERROR,CV.25.ERROR,CV.5.ERROR,
+                             CV.75.ERROR,CV.1.ERROR))
+print(MOD.RESULT)
+
+best.alpha=MOD.RESULT$alpha[which.min(MOD.RESULT$CV.Error)]
+best.lambda=MOD.RESULT$lambda[which.min(MOD.RESULT$CV.Error)]
+best.mod=glmnet(y=y,x=as.matrix(X),nlambda=1,lambda=best.lambda,alpha=best.alpha)
+best.coef=as.tibble(as.matrix(coef(best.mod)))
+best.coef2=best.coef %>% 
+              mutate(Parameter=c("Int",var.names)) %>%
+              rename(Estimate=s0) %>%
+              select(Parameter,Estimate)
+nonzero.best.coef=best.coef2 %>%
+                    filter(Estimate!=0)
+print(nonzero.best.coef,n=1e3)
+DATA2$GS.hat=predict(best.mod,newx=as.matrix(X))
+
+ggplot(DATA2) +
+  geom_point(aes(x=sales,y=GS.hat),color="lightskyblue2") +
+  geom_abline(a=0,b=1,linetype="dashed") +
+  theme_minimal() +
+  ylab("Predicted Global Sales") +
+  xlab("Actual Global Sales")
+ggplot(DATA2) +
+  geom_histogram(aes(x=sales-GS.hat),fill="lightskyblue2") +
+  theme_minimal() +
+  xlab("Residuals") +
+  ylab("Frequency")
+```
+
+
+```{r}
+# Ridge Regression 
+# correlation matrix
+# corr matrix for categorical vars 
+library(corrplot)
+vgsales_final = merged_vgsales2
+head(vgsales_final)
+
+vgsales_final[,1:11] <- lapply(vgsales_final[,1:11],as.integer)
+
+corrplot(cor(vgsales_final), type = "upper", order = "hclust", tl.col = "black")
+```
+
+
+```{r}
+## baseline 
+mod1 <- lm(sales ~., data = vgsales_final)
+summary(mod1)
+```
+
+```{r}
+# Ridge Regression
+lambdas <- 10^seq(5, -2, by = -.1)
+
+Mx<- model.matrix(sales ~ .^2, data=vgsales_final)[,-1] # matrix for predictors
+My<- vgsales_final$sales # vector for y
+
+# fit ridge model over lambda choices, 5-fold validation
+cv_glm_fit  <- cv.glmnet(Mx, My, alpha = 0, lambda = lambdas, nfolds = 5) 
+plot(cv_glm_fit)
+
+# grab optimal lambda = 0.01
+opt_lambda <- cv_glm_fit$lambda.min
+
+glm_fit <- cv_glm_fit$glmnet.fit
+summary(glm_fit)
+# grab coefficient outputs for optimal lambda
+coef(glm_fit)[,which(glm_fit$lambda == opt_lambda)]
+
+# predict using fitted model
+y_predicted<-predict(glm_fit, s = opt_lambda, newx = Mx)
+
+# Sum of Squares Total and Error
+sst <- sum((My - mean(My))^2)
+sse <- sum((y_predicted - My)^2)
+sst
+sse
+
+# R squared
+rsq <- 1 - sse / sst
+rsq
+```
+
+
+```{r}
+# Cross validation for variables selected after Ridge Regression 
+complete = merged_vgsales2[complete.cases(merged_vgsales2), ]
+DATA=complete[sample(nrow(complete), 750), ]
+DATA4=DATA[,c("Year","Genre","Critic_Score","User_Score","User_Count","Region","sales","pop")]
+head(DATA4)
+y=DATA4$sales
+X=model_matrix(DATA4, sales~.+User_Score*Region)[,-1]
+var.names=names(X)
+dim(X)
+dim(y)
+
+set.seed(216)
+cvmod.0=cv.glmnet(y=y,x=as.matrix(X),alpha=0)
+set.seed(216)
+cvmod.25=cv.glmnet(y=y,x=as.matrix(X),alpha=0.25)
+set.seed(216)
+cvmod.5=cv.glmnet(y=y,x=as.matrix(X),alpha=0.5)
+set.seed(216)
+cvmod.75=cv.glmnet(y=y,x=as.matrix(X),alpha=0.75)
+set.seed(216)
+cvmod.1=cv.glmnet(y=y,x=as.matrix(X),alpha=1)
+CV.0.ERROR=cvmod.0$cvm[which(cvmod.0$lambda==cvmod.0$lambda.1se)]
+CV.25.ERROR=cvmod.25$cvm[which(cvmod.25$lambda==cvmod.25$lambda.1se)]
+CV.5.ERROR=cvmod.5$cvm[which(cvmod.5$lambda==cvmod.5$lambda.1se)]
+CV.75.ERROR=cvmod.75$cvm[which(cvmod.75$lambda==cvmod.75$lambda.1se)]
+CV.1.ERROR=cvmod.1$cvm[which(cvmod.1$lambda==cvmod.1$lambda.1se)]
+MOD.RESULT=tibble(alpha=c(0,0.25,0.5,0.75,1),
+                  lambda=c(cvmod.0$lambda.1se,cvmod.25$lambda.1se,
+                           cvmod.5$lambda.1se,cvmod.75$lambda.1se,
+                           cvmod.1$lambda.1se),
+                  CV.Error=c(CV.0.ERROR,CV.25.ERROR,CV.5.ERROR,
+                             CV.75.ERROR,CV.1.ERROR))
+print(MOD.RESULT)
+
+best.alpha=MOD.RESULT$alpha[which.min(MOD.RESULT$CV.Error)]
+best.lambda=MOD.RESULT$lambda[which.min(MOD.RESULT$CV.Error)]
+best.mod=glmnet(y=y,x=as.matrix(X),nlambda=1,lambda=best.lambda,alpha=best.alpha)
+best.coef=as.tibble(as.matrix(coef(best.mod)))
+best.coef2=best.coef %>% 
+              mutate(Parameter=c("Int",var.names)) %>%
+              rename(Estimate=s0) %>%
+              select(Parameter,Estimate)
+nonzero.best.coef=best.coef2 %>%
+                    filter(Estimate!=0)
+print(nonzero.best.coef,n=1e3)
+DATA2$GS.hat=predict(best.mod,newx=as.matrix(X))
+
+ggplot(DATA2) +
+  geom_point(aes(x=sales,y=GS.hat),color="lightskyblue2") +
+  geom_abline(a=0,b=1,linetype="dashed") +
+  theme_minimal() +
+  ylab("Predicted Global Sales") +
+  xlab("Actual Global Sales")
+ggplot(DATA2) +
+  geom_histogram(aes(x=sales-GS.hat),fill="lightskyblue2") +
+  theme_minimal() +
+  xlab("Residuals") +
+  ylab("Frequency")
+```
+
